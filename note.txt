@@ -1,0 +1,2 @@
+Set-ExecutionPolicy -ExecutionPolicy Undefined -Scope CurrentUser
+this revert .env setting for debugging
