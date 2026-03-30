@@ -1,4 +1,5 @@
 data/*
 model/*
-! data/custom/
-! data/custom/*
+!data/custom/
+!data/custom/*
+!model/placeholder.txt
