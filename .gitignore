@@ -1,4 +1,4 @@
 data/*
 model/*
-! model/custom/
-! model/custom/*
+! data/custom/
+! data/custom/*
