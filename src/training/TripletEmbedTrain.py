@@ -10,17 +10,45 @@ from torch.utils.data import DataLoader, Dataset
 import pytorch_lightning as py_light
 from lightning.pytorch.loggers import CSVLogger 
 from torchvision import transforms
+from PIL import ImageOps
 
 import requests
 
 from src.training.ImageLabels import *
 from src.training.EmbeddingModel import EmbeddingModel
+from src.utility import utils
 
 cvl_path = settings.DATA_DIR / "CVL-cropped/train"
 cvl_val_path = settings.DATA_DIR / "CVL-cropped/val"
 cvl_stats_path = settings.DATA_DIR / "CVL-cropped/stats"
 
 pretrained_modelName = 'microsoft/trocr-large-handwritten'
+
+class ImagePadding:
+    def __call__(self, img):
+        dimension = max(img.size)
+        return ImageOps.pad(img, (dimension, dimension), color=(255, 255, 255))
+
+def img_pixel_Transformer():
+    transformer = transforms.Compose([
+            #padding the image into square one
+            ImagePadding(),
+            transforms.Resize((384, 384)), 
+            transforms.ToTensor(),        
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]) 
+        ])
+    return transformer
+
+def img_augmented_transforms():
+    return transforms.Compose([
+        ImagePadding(),
+        transforms.RandomResizedCrop((384, 384), scale=(0.8, 1.0), ratio=(1, 1)),         
+        transforms.RandomRotation(degrees=(-10, 10)),       
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05),
+        
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    ])
 
 
 class TripletEmbeddModel(py_light.LightningModule, EmbeddingModel):
@@ -43,16 +71,14 @@ class TripletEmbeddModel(py_light.LightningModule, EmbeddingModel):
             nn.Linear(512, embedding_length)
         )
         
-        self.loss_fct = losses.TripletMarginLoss(margin=0.3)
+        self.lossFunc = losses.TripletMarginLoss(margin=0.3)
         self.miner = miners.MultiSimilarityMiner()
 
     def forward(self, pixel_values):
-        # outputs.last_hidden_state shape: [batch_size, sequence_length, embedding_vectorLength = 1024]
-        # batch means how many inputs to train every time
+        # outputs.last_hidden_state shape: [batch_size, sequence_length, embedding_vectorLength]
         # sequence length is length of grids. Vision encoder breaks input pixel into hundreds of small grids, and adds CLS token at gridList[0] 
-        # embedding vector length is 1024 
-        style_embedding = self.encoder(pixel_values=pixel_values).last_hidden_state[:, 0, :]
-        embeddings = self.projection(style_embedding)
+        styleEmbedding = self.encoder(pixel_values=pixel_values).last_hidden_state[:, 0, :]
+        embeddings = self.projection(styleEmbedding)
         return torch.nn.functional.normalize(embeddings, p=2, dim=1)
 
     def training_step(self, batch, batch_idx):
@@ -69,10 +95,7 @@ class TripletEmbeddModel(py_light.LightningModule, EmbeddingModel):
         x, y = batch["pixel_values"], batch["labels"]
         embeddings = self(x)
         
-        # 1. Mine the triplets from the batch labels
-        indices_tuple = self.miner(embeddings, y)
-        # 2. Calculate Triplet Loss
-        loss = self.loss_fct(embeddings, y, indices_tuple)
+        loss = self.lossFunc(embeddings, y, self.miner(embeddings, y))
 
         return loss
 
@@ -84,46 +107,56 @@ class TripletEmbeddModel(py_light.LightningModule, EmbeddingModel):
     
     def get_embedding(self, imageIn):
         
-        if isinstance(imageIn, (str, Path)):
-            image = Image.open(imageIn).convert("RGB")
-        else:
-            image = imageIn.convert("RGB")
+        image = utils.getRGBImage(imageIn)
 
-        pixel_values = self.imgTansformer(image)       
-        pixel_values = pixel_values.unsqueeze(0)       
-        pixel_values = pixel_values.to(self.device)
+        pixelValues = self.imgTansformer(image)       
+        pixelValues = pixelValues.unsqueeze(0)       
+        pixelValues = pixelValues.to(self.device)
 
         self.eval()
         with torch.no_grad():
-            embedding = self(pixel_values) 
+            embedding = self(pixelValues) 
             
         return embedding
+    
+    def get_list_embeddings(self, image_list, batch_size=32):
+        self.eval() 
+        embeddings = []
+        for i in range(0, len(image_list), batch_size):
+            pixelValuesList = []
+            batch_images = image_list[i : i + batch_size]
+            for img in batch_images:
+                image = utils.getRGBImage(img)
+                tensor = self.imgTansformer(image)
+                pixelValuesList.append(tensor)
+                
+            batchTensor = torch.stack(pixelValuesList)           
+            batchTensor = batchTensor.to(self.device)
+            
+            with torch.no_grad():
+                embeddingsBatch = self(batchTensor)
+                embeddings.extend(embeddingsBatch.detach().cpu().tolist())
+
+            torch.cuda.empty_cache()
+            
+        return embeddings
 
 
     
-
-def img_pixel_Transformer():
-    transformer = transforms.Compose([
-            transforms.Resize((384, 384)), # TrOCR-Large requires exactly 384x384
-            transforms.ToTensor(),         # Converts to PyTorch Tensor & scales to 0-1
-            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]) # TrOCR defaults
-        ])
-    return transformer
-
         
 def map_label(filePaths, processor):  
     images = [Image.open(path).convert("RGB") for path in filePaths]
-    pixel_values = processor(images, return_tensors="pt", padding=True).pixel_values
-    pixel_values_List = [e for e in pixel_values]
+    pixelValues = processor(images, return_tensors="pt", padding=True).pixel_values
+    pixelValuesList = [e for e in pixelValues]
 
-    return {"pixel_values": pixel_values_List}
+    return {"pixel_values": pixelValuesList}
 
 class StyleDataset(Dataset):
-    def __init__(self, file_paths, labels, pixel_values=None):
+    def __init__(self, file_paths, labels, pixel_values=None, transformer = img_pixel_Transformer):
         self.file_paths = file_paths
         self.labels = labels
         self.pixel_values = pixel_values
-        self.pixel_transform = img_pixel_Transformer()
+        self.pixel_transform = transformer()
 
     def __len__(self):
         return len(self.file_paths)
@@ -141,25 +174,25 @@ class StyleDataset(Dataset):
         
         return {"pixel_values": image_pixel_values, "labels": label}
     
-def make_DataLoader(directory, labelFunction, batch=32):
-    # hugging face processor to change image pixel, use this for CPU image processing
+def make_DataLoader(directory, labelFunction, batch=32, transformer = img_pixel_Transformer):
+    # hugging face built in processor
     processor = TrOCRProcessor.from_pretrained(pretrained_modelName)
 
     Paths, Labels = labelFunction(directory)
-    DS = StyleDataset(Paths, Labels)
+    DS = StyleDataset(Paths, Labels, transformer=transformer)
 
     # m represent how many images chosen from the anchor/N/P
     sampler = samplers.MPerClassSampler(
     labels=Labels, 
     m=4, 
     batch_size=batch,
-    length_before_new_iter=len(DS) * 2 #without this, sampler will try to anchor all labels, causing large steps each epoch. This tell how many step each epoch
+    length_before_new_iter=len(DS)  #without this, sampler will try to anchor all labels, causing large steps each epoch. This tell how many step each epoch
     )
 
     dataLoader = DataLoader(
         DS, 
         batch_size=batch, 
-        sampler=sampler, #make sure triplet is correct format
+        sampler=sampler,
         pin_memory=True,
         num_workers=8,
         persistent_workers=True
@@ -181,13 +214,13 @@ if __name__ == '__main__':
         accelerator="gpu", 
         devices=1, 
         precision="bf16-mixed", 
-        max_epochs=5,
+        max_epochs=20,
         logger=csv_logger,
         log_every_n_steps=10,
         accumulate_grad_batches = 2
     )
 
-    trainLoader = make_DataLoader(cvl_path, getCVL_PathLabels, batch)
+    trainLoader = make_DataLoader(cvl_path, getCVL_PathLabels, batch, transformer=img_augmented_transforms)
     valLoader = make_DataLoader(cvl_val_path, getCVL_PathLabels, batch)
     
     

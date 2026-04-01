@@ -33,6 +33,6 @@ def Display_Tain_Loss_tf(tfeventDir):
     plt.title("Training Loss")
     plt.show()
 
-Display_Train_Loss("data/CVL-cropped/stats/training_log/version_13/metrics.csv")
-Display_Val_Loss("data/CVL-cropped/stats/training_log/version_13/metrics.csv")
+Display_Train_Loss("data/CVL-cropped/stats/training_log/version_22/metrics.csv")
+Display_Val_Loss("data/CVL-cropped/stats/training_log/version_22/metrics.csv")
 # Display_Tain_Loss_tf("lightning_logs/version_10/")

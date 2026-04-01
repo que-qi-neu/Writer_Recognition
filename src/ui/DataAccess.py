@@ -1,29 +1,67 @@
-from src.training.ImageLabels import *
+from src.training import ImageLabels
 from src.training.EmbeddingModel import EmbeddingModel
 from src.training.TripletEmbedTrain import TripletEmbeddModel
+from src.utility import utils
 from pathlib import Path
 from PIL import Image
+from config import settings
 import numpy as np
-import faiss
+import chromadb
 import torch
 
-class EmbedModelAccess():
-    def __init__(self, model : EmbeddingModel):
-        self.model = model
-        self.dbIndex = faiss.IndexFlatL2(self.model.get_Dimension())
+class VectorDataAccess():
+    def __init__(self, dbPath, dbName):
+        self.client = chromadb.PersistentClient(path=dbPath)
+        self.collection = self.client.get_or_create_collection(
+            name=dbName,
+            metadata={"hnsw:space": "l2"} #vector distance
+        )
 
-    def get_Embedding_Vector(self, path:str):
-        return self.model.get_embedding(Image.open(path))
+    def upsert_Vector(self, vectors, paths:str):
+        self.collection.upsert(
+            ids=paths,
+            embeddings=vectors
+        )
+
+    def getNearest_Vectors(self, vector, k=5):
+        # results format below
+        # {
+        #     'ids': [['./data/custom/image2.tif', './data/custom/image1.tif']], 
+        #     'distances': [[0.1234, 0.4567]], 
+        #     'metadatas': [[None, None]], 
+        #     'embeddings': None, 
+        #     'documents': [[None, None]], 
+        #     'uris': None, 
+        #     'data': None
+        # }
+        results = self.collection.query(
+            query_embeddings=vector,
+            n_results=k 
+        )
+        return results
     
-    def get_Embedding_Vector(self, paths:list[str]):
-        return [self.model.get_Embedding(e) for e in paths]
+class EmbedModelDataAccess():
+    def __init__(self, model:EmbeddingModel, dbName="Writer_Identifiers"):
+        self.model = model
+        utils.modelToGPU(self.model)
+        self.vectorDB = VectorDataAccess(settings.VECTOR_DATA_DIR, dbName)
+    def UpsertFolder(self, directory:str):
+        print('Inserting images and vectors from ', directory)
+        files = ImageLabels.getFolderFiles(directory)
+        vectors_lst = self.model.get_list_embeddings(files)
+    
+        self.vectorDB.upsert_Vector(vectors_lst, files)
 
-    def store_Embeddings(self, paths:list[str]):
-        embeddings = self.get_Embedding_Vector(paths)
-        self.dbIndex.add(embeddings)
+    def NearestImages(self, imageIn, k=5):
+        image = utils.getRGBImage(imageIn)
+        vectorTensor = self.model.get_embedding(image)
+        embeddingVector = vectorTensor.detach().cpu().tolist()
+        results = self.vectorDB.getNearest_Vectors(embeddingVector, k)
+        utils.displayImages(results['ids'][0], k)
+        return results
+    
 
-    def getNearest_Vectors(self, vector:list[float], k=5):
-        distances, indices = self.dbIndex.search(vector, k)
+
 
         
 

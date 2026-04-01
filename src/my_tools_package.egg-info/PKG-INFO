@@ -1,7 +1,9 @@
 Metadata-Version: 2.4
 Name: my_tools_package
 Version: 0.1.0
+License-File: LICENSE
 Requires-Dist: accelerate>=1.13.0
+Requires-Dist: chromadb>=1.5.5
 Requires-Dist: datasets>=4.8.4
 Requires-Dist: faiss-cpu>=1.13.2
 Requires-Dist: matplotlib>=3.10.8
@@ -17,3 +19,4 @@ Requires-Dist: torch>=2.10.0
 Requires-Dist: torchaudio>=2.10.0
 Requires-Dist: torchvision>=0.25.0
 Requires-Dist: transformers[torch]>=5.3.0
+Dynamic: license-file

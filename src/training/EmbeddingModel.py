@@ -7,3 +7,5 @@ class EmbeddingModel():
         return None
     def get_Dimension():
         return 512
+    def get_list_embeddings(self, image_list):
+        return None

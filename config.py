@@ -6,6 +6,7 @@ class Settings:
     TEST_DATA_DIR = ROOT_DIR / "data/test"
     MODEL_DIR = ROOT_DIR / "model"
     CODE_DIR = ROOT_DIR / "src"
+    VECTOR_DATA_DIR = CODE_DIR / "ui/storage/vector_data"
 
 settings = Settings()
 
