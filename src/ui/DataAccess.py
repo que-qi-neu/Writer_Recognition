@@ -5,13 +5,14 @@ from src.utility import utils
 from pathlib import Path
 from PIL import Image
 from config import settings
+from chromadb.config import Settings
 import numpy as np
 import chromadb
 import torch
 
 class VectorDataAccess():
     def __init__(self, dbPath, dbName):
-        self.client = chromadb.PersistentClient(path=dbPath)
+        self.client = chromadb.PersistentClient(path=dbPath, settings=Settings(allow_reset=True))
         self.collection = self.client.get_or_create_collection(
             name=dbName,
             metadata={"hnsw:space": "l2"} #vector distance
@@ -52,13 +53,23 @@ class EmbedModelDataAccess():
     
         self.vectorDB.upsert_Vector(vectors_lst, files)
 
-    def NearestImages(self, imageIn, k=5):
+    def NearestImages(self, imageIn, k=5, displayImage=True):
         image = utils.getRGBImage(imageIn)
         vectorTensor = self.model.get_embedding(image)
         embeddingVector = vectorTensor.detach().cpu().tolist()
         results = self.vectorDB.getNearest_Vectors(embeddingVector, k)
-        utils.displayImages(results['ids'][0], k)
+        if displayImage:
+            utils.displayImages(results['ids'][0], k)
         return results
+    
+    def existingWriter(self, imageIn):
+        return self.averageDistances(imageIn=imageIn, k=1) < 0.15
+    
+    def averageDistances(self, imageIn, k=3):
+        vectors = self.NearestImages(imageIn=imageIn, k=k, displayImage=False)
+        distances = vectors['distances'][0]
+        return sum(distances) / len(distances)
+
     
 
 
